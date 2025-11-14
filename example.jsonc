@@ -1,0 +1,27 @@
+{
+    "java": // str，编程语言，可选项: "c/c++", "java"
+        {
+            "CWD-77": [  // str，CWD number
+                {
+                    "benign_code": {
+                        "context": "",  // str，暂时放class file path，没有则为null
+                        "class": "",  // str，如果是class-level的vulnerability放在这里，否则为null
+                        "func": "",  // str，完整的function代码，若不是function-level则为null
+                        "lines": []  // list[str]，diff lines中增加的code lines，以及diff lines前后两行（去掉前面的+）
+                    },
+                    "vulnerable_code": {
+                        "context": "",
+                        "class": "",
+                        "func": "", 
+                        "lines": []
+                    },
+                    "source": "primevul",  //str，数据集名称，可选项："primevul", "diversevul", "megavul", "cvefixes", "juliet"，不可为空
+                    "commit_url": "https://github.com/karelzak/util-linux/commit/89e90ae7b2826110ea28c1c0eb8e7c56c3907bdc",  // str，对应的commit链接，没有则为null
+                    "CWE": "CWE-77",  // str，CWD对应的CWE，若没有则为null
+                    "other_CWEs": [],  // list[str]，其他CWE的列表，若为空则用[]表示
+                    "other_CWDs": [],  // list[str]，其他CWD的列表，若为空则用[]表示
+                    "issue_url": "https://github.com/karelzak/util-linux/issues/1234",  // str，对应的issue链接，没有则为null
+                },
+            ]
+        }
+}

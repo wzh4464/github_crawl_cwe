@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(while read f)",
+      "Bash(do jq length $f)",
+      "Bash(done)",
+      "Bash(for f in /Volumes/Mac_Ext/link_cache/codes/github_crawl_cwe/response/CWE-23/*_files.json)",
+      "Bash(do echo -n '$(basename $f): ')",
+      "Bash(jq:*)",
+      "Bash(python:*)",
+      "Bash(uv sync:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

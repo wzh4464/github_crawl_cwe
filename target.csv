@@ -1,0 +1,29 @@
+CWE,description
+CWE-646,"The product allows a file to be uploaded, but it relies on the file name or extension of the file to determine the appropriate behaviors. This could be used by attackers to cause the file to be misclassified and processed in a dangerous fashion."
+CWE-1053,The product does not have documentation that represents how it is designed.
+CWE-106,"When an application does not use an input validation framework such as the Struts Validator, there is a greater risk of introducing weaknesses related to insufficient input validation."
+CWE-108,Every Action Form must have a corresponding validation form.
+CWE-109,"Automatic filtering via a Struts bean has been turned off, which disables the Struts Validator and custom validation logic. This exposes the application to other weaknesses related to insufficient input validation."
+CWE-554,The ASP.NET application does not use an input validation framework.
+CWE-1174,"The ASP.NET application does not use, or incorrectly uses, the model validation framework."
+CWE-23,"The product uses external input to construct a pathname that should be within a restricted directory, but it does not properly neutralize sequences such as .. that can resolve to a location that is outside of that directory."
+CWE-36,"The product uses external input to construct a pathname that should be within a restricted directory, but it does not properly neutralize absolute path sequences such as /abs/path that can resolve to a location that is outside of that directory."
+CWE-41,The product is vulnerable to file system contents disclosure through path equivalence. Path equivalence involves the use of special characters in file and directory names. The associated manipulations are intended to generate multiple names for the same object.
+CWE-622,"The product adds hooks to user-accessible API functions, but it does not properly validate the arguments. This could lead to resultant vulnerabilities."
+CWE-1286,"The product receives input that is expected to be well-formed - i.e., to comply with a certain syntax - but it does not validate or incorrectly validates that the input complies with the syntax."
+CWE-366,"If two threads of execution use a resource simultaneously, there exists the possibility that resources may be used while invalid, in turn making the state of execution undefined."
+CWE-368,"A product performs a series of non-atomic actions to switch between contexts that cross privilege or other security boundaries, but a race condition allows an attacker to modify or misrepresent the product's behavior during the switch."
+CWE-412,"The product properly checks for the existence of a lock, but the lock can be externally controlled or influenced by an actor that is outside of the intended sphere of control."
+CWE-413,The product does not lock or does not correctly lock a resource when the product must have exclusive access to the resource.
+CWE-414,A product does not check to see if a lock is present before performing sensitive operations on a resource.
+CWE-609,"The product uses double-checked locking to access a resource without the overhead of explicit synchronization, but the locking is insufficient."
+CWE-764,"The product locks a critical resource more times than intended, leading to an unexpected state in the system."
+CWE-765,"The product unlocks a critical resource more times than intended, leading to an unexpected state in the system."
+CWE-832,The product attempts to unlock a resource that is not locked.
+CWE-833,"The product contains multiple threads or executable segments that are waiting for each other to release a necessary lock, resulting in deadlock."
+CWE-543,The product uses the singleton pattern when creating a resource within a multithreaded environment.
+CWE-567,"The product does not properly synchronize shared data, such as static variables across threads, which can lead to undefined behavior and unpredictable data changes."
+CWE-1096,The product implements a Singleton design pattern but does not use appropriate locking or other synchronization mechanism to ensure that the singleton class is only instantiated once.
+CWE-1088,"The code has a synchronous call to a remote resource, but there is no timeout for the call, or the timeout is set to infinite."
+CWE-572,"The product calls a thread's run() method instead of calling start(), which causes the code to run in the thread of the caller instead of the callee."
+CWE-663,The product calls a non-reentrant function in a concurrent context in which a competing code sequence (e.g. thread or signal handler) may have an opportunity to call the same function or otherwise influence its state.
