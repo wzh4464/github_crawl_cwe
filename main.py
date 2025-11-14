@@ -290,17 +290,22 @@ class GithubCweCrawler:
         self.keyword_cache: Dict[str, List[str]] = {}
 
     def run(self) -> None:
+        success = False
         try:
             for cwe in self.iter_cwes():
                 self.log_progress(f"Starting crawl for {cwe}")
                 count = self.process_cwe(cwe)
                 self.counts[cwe] = count
                 self.log_progress(f"Finished {cwe} with {count} record(s)")
+            success = True
         finally:
             self.client.close()
-        self.log_progress("Writing target copy with counts")
-        self.write_target_counts()
-        self.log_progress("Crawl completed")
+            self.log_progress("Writing target copy with counts")
+            self.write_target_counts()
+            if success:
+                self.log_progress("Crawl completed")
+            else:
+                self.log_progress("Crawl aborted")
 
     def iter_cwes(self) -> Iterator[str]:
         if not self.target_csv.exists():
@@ -853,6 +858,26 @@ class GithubCweCrawler:
                 cwe_to_cwd[cwe] = cwd
         return cwe_to_cwd
 
+    def load_existing_target_counts(self) -> Dict[str, int]:
+        """Load counts from the last target_with_counts.csv snapshot"""
+        if not self.target_counts_copy.exists():
+            return {}
+        with self.target_counts_copy.open(newline="", encoding="utf-8") as fh:
+            reader = csv.DictReader(fh)
+            if "CWE" not in (reader.fieldnames or []) or "count" not in (reader.fieldnames or []):
+                return {}
+            counts: Dict[str, int] = {}
+            for row in reader:
+                cwe = (row.get("CWE") or "").strip()
+                count_raw = (row.get("count") or "").strip()
+                if not cwe:
+                    continue
+                try:
+                    counts[cwe] = int(count_raw or 0)
+                except ValueError:
+                    counts[cwe] = 0
+            return counts
+
     def write_target_counts(self) -> None:
         if not self.target_csv.exists():
             return
@@ -865,12 +890,19 @@ class GithubCweCrawler:
         if "count" not in fieldnames:
             fieldnames.append("count")
 
+        existing_counts = self.load_existing_target_counts()
+
         with self.target_counts_copy.open("w", newline="", encoding="utf-8") as fh:
             writer = csv.DictWriter(fh, fieldnames=fieldnames)
             writer.writeheader()
             for row in rows:
                 cwe = row.get("CWE", "").strip()
-                row["count"] = self.counts.get(cwe, 0)
+                count_value = self.counts.get(cwe)
+                if count_value is None:
+                    count_value = self.record_counts.get(cwe)
+                if count_value is None:
+                    count_value = existing_counts.get(cwe, 0)
+                row["count"] = count_value
                 writer.writerow(row)
 
     def log_progress(self, message: str) -> None:
