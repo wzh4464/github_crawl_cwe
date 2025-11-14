@@ -1,7 +1,7 @@
 CWE,description,count
 CWE-646,"The product allows a file to be uploaded, but it relies on the file name or extension of the file to determine the appropriate behaviors. This could be used by attackers to cause the file to be misclassified and processed in a dangerous fashion.",0
 CWE-1053,The product does not have documentation that represents how it is designed.,0
-CWE-106,"When an application does not use an input validation framework such as the Struts Validator, there is a greater risk of introducing weaknesses related to insufficient input validation.",0
+CWE-106,"When an application does not use an input validation framework such as the Struts Validator, there is a greater risk of introducing weaknesses related to insufficient input validation.",1
 CWE-108,Every Action Form must have a corresponding validation form.,0
 CWE-109,"Automatic filtering via a Struts bean has been turned off, which disables the Struts Validator and custom validation logic. This exposes the application to other weaknesses related to insufficient input validation.",0
 CWE-554,The ASP.NET application does not use an input validation framework.,0
