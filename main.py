@@ -35,6 +35,8 @@ GITHUB_API = "https://api.github.com"
 MAX_RECORDS_PER_CWE = 10000
 SEARCH_PER_PAGE = 100
 REQUEST_TIMEOUT = 30.0
+REQUEST_RETRY_DELAY = 5.0
+MAX_REQUEST_RETRIES = 5
 BENIGN_PREFIX = "+"
 VULNERABLE_PREFIX = "-"
 MIN_STARS_EXCLUSIVE = 100
@@ -634,14 +636,35 @@ class GithubCweCrawler:
         url = endpoint
         if not endpoint.startswith("http"):
             url = f"{GITHUB_API}{endpoint}"
+        attempt = 0
         while True:
-            response = self.client.request(method, url, params=params)
+            try:
+                response = self.client.request(method, url, params=params)
+            except httpx.ReadTimeout:
+                attempt += 1
+                if attempt >= MAX_REQUEST_RETRIES:
+                    raise
+                self.log_progress(
+                    f"{cwe}: {label} read timeout (attempt {attempt}/{MAX_REQUEST_RETRIES}), retrying in {int(REQUEST_RETRY_DELAY)}s"
+                )
+                time.sleep(REQUEST_RETRY_DELAY)
+                continue
+            except httpx.TransportError as exc:
+                attempt += 1
+                if attempt >= MAX_REQUEST_RETRIES:
+                    raise
+                self.log_progress(
+                    f"{cwe}: {label} transport error {exc.__class__.__name__} (attempt {attempt}/{MAX_REQUEST_RETRIES}), retrying in {int(REQUEST_RETRY_DELAY)}s"
+                )
+                time.sleep(REQUEST_RETRY_DELAY)
+                continue
             remaining = response.headers.get("X-RateLimit-Remaining")
             if response.status_code == 403 and remaining == "0":
                 reset_ts = response.headers.get("X-RateLimit-Reset")
                 sleep_for = max(int(reset_ts or 0) - int(time.time()) + 1, 1)
                 self.log_progress(f"Rate limited, sleeping {sleep_for}s")
                 time.sleep(sleep_for)
+                attempt = 0
                 continue
             try:
                 response.raise_for_status()
