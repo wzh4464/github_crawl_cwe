@@ -8,7 +8,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Tuple
 
 import httpx
 from dotenv import dotenv_values
@@ -261,6 +261,10 @@ class GithubCweCrawler:
         self.progress_log = self.response_dir / "progress.log"
         self.output_file = self.root / "github_cwe_results.json"
         self.target_counts_copy = self.root / "target_with_counts.csv"
+        self.cwe_to_cwd_map = self.load_cwe_to_cwd_map()
+        self.loaded_record_sets: Dict[str, Set[str]] = {}
+        self.record_metadata: Dict[str, str] = {}
+        self.record_counts: Dict[str, int] = {}
         self.response_dir.mkdir(parents=True, exist_ok=True)
         self.records_dir.mkdir(parents=True, exist_ok=True)
         env = dotenv_values(self.root / ".env")
@@ -292,8 +296,6 @@ class GithubCweCrawler:
                 self.log_progress(f"Finished {cwe} with {count} record(s)")
         finally:
             self.client.close()
-        self.log_progress("Building consolidated output")
-        self.build_final_output()
         self.log_progress("Writing target copy with counts")
         self.write_target_counts()
         self.log_progress("Crawl completed")
@@ -311,20 +313,99 @@ class GithubCweCrawler:
                     continue
                 yield cwe
 
+    def load_existing_records(self, cwe: str) -> Tuple[Set[str], int]:
+        if cwe in self.loaded_record_sets:
+            existing = self.loaded_record_sets[cwe]
+            return existing, self.record_counts.get(cwe, len(existing))
+        records_path = self.records_dir / f"{cwe}.jsonl"
+        processed: Set[str] = set()
+        count = 0
+        if records_path.exists():
+            with records_path.open(encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    entry = data.get("entry", {})
+                    issue_url = entry.get("issue_url")
+                    if issue_url:
+                        processed.add(issue_url)
+                        merged_at = data.get("merged_at")
+                        if merged_at:
+                            self.record_metadata[issue_url] = merged_at
+                    count += 1
+        self.loaded_record_sets[cwe] = processed
+        self.record_counts[cwe] = count
+        return processed, count
+
+    @staticmethod
+    def build_pr_label(repo_full_name: str, issue_number: Optional[int]) -> str:
+        suffix = issue_number if issue_number is not None else "unknown"
+        return f"{repo_full_name.replace('/', '__')}_pr_{suffix}"
+
+    def get_response_payload_path(self, cwe: str, label: str) -> Path:
+        safe_label = label.replace("/", "__")
+        target_dir = self.response_dir / cwe
+        target_dir.mkdir(parents=True, exist_ok=True)
+        return target_dir / f"{safe_label}.json"
+
+    def load_cached_response(self, cwe: str, label: str) -> Optional[Any]:
+        path = self.get_response_payload_path(cwe, label)
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return None
+
+    def is_pr_already_processed(
+        self,
+        cwe: str,
+        repo_full_name: Optional[str],
+        pr_number: Optional[int],
+        issue_url: Optional[str],
+        processed_issue_urls: Set[str],
+    ) -> bool:
+        if issue_url and issue_url in processed_issue_urls:
+            return True
+        if not repo_full_name or not pr_number:
+            return False
+        pr_label = self.build_pr_label(repo_full_name, pr_number)
+        files_label = f"{pr_label}_files"
+        pr_path = self.get_response_payload_path(cwe, pr_label)
+        files_path = self.get_response_payload_path(cwe, files_label)
+        return pr_path.exists() and files_path.exists()
+
     def process_cwe(self, cwe: str) -> int:
         records_path = self.records_dir / f"{cwe}.jsonl"
-        total_written = 0
-        with records_path.open("w", encoding="utf-8") as rec_file:
+        processed_issue_urls, existing_count = self.load_existing_records(cwe)
+        total_written = existing_count
+        new_written = 0
+        if total_written >= MAX_RECORDS_PER_CWE:
+            self.log_progress(f"{cwe}: Existing {existing_count} record(s) meet limit, skipping")
+            return total_written
+        with records_path.open("a", encoding="utf-8") as rec_file:
             for item in self.search_prs(cwe):
                 if total_written >= MAX_RECORDS_PER_CWE:
                     break
-                record = self.process_search_item(cwe, item)
+                record = self.process_search_item(cwe, item, processed_issue_urls)
                 if not record:
                     continue
                 rec_file.write(json.dumps(record.__dict__) + "\n")
+                issue_url = record.entry.get("issue_url")
+                if issue_url:
+                    processed_issue_urls.add(issue_url)
+                    self.record_metadata[issue_url] = record.merged_at
                 total_written += 1
-                if total_written % 10 == 0:
-                    self.log_progress(f"{cwe}: {total_written} record(s) written")
+                new_written += 1
+                self.incremental_update_final_output(record)
+                if new_written % 10 == 0:
+                    self.log_progress(f"{cwe}: {new_written} new record(s) appended (total {total_written})")
+        self.record_counts[cwe] = total_written
         return total_written
 
     def get_ai_keywords(self, cwe: str) -> List[str]:
@@ -389,7 +470,7 @@ class GithubCweCrawler:
                 break
             page += 1
 
-    def process_search_item(self, cwe: str, item: Dict) -> Optional[RecordWrapper]:
+    def process_search_item(self, cwe: str, item: Dict, processed_issue_urls: Set[str]) -> Optional[RecordWrapper]:
         pull_info = item.get("pull_request") or {}
         pull_url = pull_info.get("url")
         if not pull_url:
@@ -397,11 +478,15 @@ class GithubCweCrawler:
         repo_full_name = self.extract_repo_full_name(item.get("repository_url"))
         if not repo_full_name:
             return None
+        issue_url = item.get("html_url")
+        pr_number = item.get("number")
+        if self.is_pr_already_processed(cwe, repo_full_name, pr_number, issue_url, processed_issue_urls):
+            return None
         if not self.repo_meets_star_requirement(
             cwe, repo_full_name, cache_key=f"{repo_full_name}_repo"
         ):
             return None
-        pr_data = self.fetch_pull_request(cwe, pull_url, repo_full_name, item.get("number"))
+        pr_data = self.fetch_pull_request(cwe, pull_url, repo_full_name, pr_number)
         if not pr_data:
             return None
         if not pr_data.get("merged_at"):
@@ -482,7 +567,10 @@ class GithubCweCrawler:
     def fetch_pull_request(
         self, cwe: str, pull_url: str, repo_full_name: str, issue_number: Optional[int]
     ) -> Optional[Dict]:
-        label = f"{repo_full_name.replace('/', '__')}_pr_{issue_number or 'unknown'}"
+        label = self.build_pr_label(repo_full_name, issue_number)
+        cached = self.load_cached_response(cwe, label)
+        if cached is not None:
+            return cached
         data, _ = self.request_json("GET", pull_url, cwe=cwe, label=label)
         return data
 
@@ -491,7 +579,10 @@ class GithubCweCrawler:
             return []
         endpoint = f"/repos/{repo_full_name}/pulls/{pr_number}/files"
         params = {"per_page": 100, "page": 1}
-        label = f"{repo_full_name.replace('/', '__')}_pr_{pr_number}_files"
+        label = f"{self.build_pr_label(repo_full_name, pr_number)}_files"
+        cached = self.load_cached_response(cwe, label)
+        if cached is not None:
+            return cached
         data, headers = self.request_json("GET", endpoint, params=params, cwe=cwe, label=label)
         if "next" in self.parse_link_header(headers.get("link", "")):
             return []
@@ -562,10 +653,7 @@ class GithubCweCrawler:
             return data, response.headers
 
     def save_response_payload(self, cwe: str, label: str, data) -> None:
-        safe_label = label.replace("/", "__")
-        target_dir = self.response_dir / cwe
-        target_dir.mkdir(parents=True, exist_ok=True)
-        path = target_dir / f"{safe_label}.json"
+        path = self.get_response_payload_path(cwe, label)
         if isinstance(data, str):
             path.write_text(data, encoding="utf-8")
         else:
@@ -636,8 +724,63 @@ class GithubCweCrawler:
             matches = [m for m in matches if m != primary_upper]
         return matches
 
+    def incremental_update_final_output(self, record: RecordWrapper) -> None:
+        cwd = self.cwe_to_cwd_map.get(record.cwe)
+        if not cwd:
+            self.log_progress(f"{record.cwe}: Missing CWD mapping, skipping final output update")
+            return
+        issue_url = record.entry.get("issue_url")
+        if issue_url:
+            self.record_metadata[issue_url] = record.merged_at
+        current: Dict[str, Dict[str, List[Dict]]] = {}
+        if self.output_file.exists():
+            try:
+                current = json.loads(self.output_file.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                self.log_progress("github_cwe_results.json is invalid JSON, rebuilding progressively")
+                current = {}
+        language_bucket = current.setdefault(record.language, {})
+        existing_entries = list(language_bucket.get(cwd, []))
+        if issue_url:
+            existing_entries = [
+                entry for entry in existing_entries if entry.get("issue_url") != issue_url
+            ]
+        existing_entries.append(record.entry)
+        sorted_entries = sorted(
+            existing_entries,
+            key=lambda entry: self.parse_merged_at(self.get_merged_at_for_entry(entry)),
+            reverse=True,
+        )
+        language_bucket[cwd] = sorted_entries
+        current[record.language] = language_bucket
+        self.output_file.write_text(
+            json.dumps(current, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def get_merged_at_for_entry(self, entry: Dict) -> Optional[str]:
+        issue_url = entry.get("issue_url")
+        if issue_url:
+            merged_at = self.record_metadata.get(issue_url)
+            if merged_at:
+                return merged_at
+        cwe = entry.get("CWE")
+        if cwe:
+            self.load_existing_records(cwe)
+            if issue_url:
+                return self.record_metadata.get(issue_url)
+        return None
+
+    @staticmethod
+    def parse_merged_at(value: Optional[str]) -> datetime:
+        if not value:
+            return datetime.fromtimestamp(0, tz=timezone.utc)
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return datetime.fromtimestamp(0, tz=timezone.utc)
+
     def build_final_output(self) -> None:
-        cwe_to_cwd = self.load_cwe_to_cwd_map()
         aggregator: Dict[str, Dict[str, List[Tuple[str, Dict]]]] = defaultdict(
             lambda: defaultdict(list)
         )
@@ -652,7 +795,7 @@ class GithubCweCrawler:
                     cwe = data["cwe"]
                     merged_at = data["merged_at"]
                     entry = data["entry"]
-                    cwd = cwe_to_cwd.get(cwe)
+                    cwd = self.cwe_to_cwd_map.get(cwe)
                     if not cwd:
                         self.log_progress(f"{cwe}: Missing CWD mapping, skipping record")
                         continue
